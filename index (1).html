@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ScrollMe</title>
+<style>
+*{box-sizing:border-box}html,body{height:100%;margin:0;background:#0b0b10;color:#fff;font-family:system-ui,sans-serif}
+#feed,#live{height:100%;overflow-y:scroll;scroll-snap-type:y mandatory}#live{display:none;overflow:hidden;position:relative;background:#000}
+.post{height:100%;scroll-snap-align:start;position:relative;background:#000}
+.post video,.post img,#live video{width:100%;height:100%;object-fit:contain}
+.info{position:absolute;left:0;right:70px;bottom:0;padding:16px 16px 28px;background:linear-gradient(transparent,#000c)}
+.side{position:absolute;right:10px;bottom:90px;display:flex;flex-direction:column;gap:14px}
+button,.pb{font:inherit}.side button,.del{background:#0008;color:#fff;border:0;border-radius:24px;padding:10px 12px}.side .on{color:#ff3d77}
+.del{position:absolute;right:10px;bottom:28px}
+header{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;align-items:center;padding:12px 16px;z-index:5}
+header h1{margin:0 auto 0 0;font-size:22px}header h1 i{color:#ff3d77;font-style:normal}
+header button{background:#0008;color:#fff;border:0;border-radius:20px;padding:9px 13px}header .hot{background:#ff3d77;font-weight:700}
+.c{height:100%;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;text-align:center;padding:24px;color:#a0a0b0}
+.bg{position:fixed;inset:0;background:#000b;display:none;align-items:flex-end;z-index:10}.bg.on{display:flex}
+.box{background:#1a1a24;width:100%;padding:20px 16px 28px;border-radius:20px 20px 0 0;display:grid;gap:12px}
+.box input[type=text]{padding:12px;border-radius:10px;border:1px solid #333;background:#0b0b10;color:#fff;font-size:16px}
+.box button{padding:12px;border:0;border-radius:10px;font-weight:700;background:#333;color:#fff}.box .go{background:#ff3d77}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pb{background:#333;text-align:center;padding:12px;border-radius:10px;font-weight:700}
+#cl{overflow-y:auto;max-height:40vh;display:grid;gap:10px}#cl p{margin:0;font-size:14px}.m{color:#a0a0b0;font-size:14px}
+</style></head><body>
+<header><h1>Scroll<i>Me</i></h1><button id="tf">Feed</button><button id="tl">Live</button><button id="up" class="hot" hidden>+</button><button id="out" hidden>Sign out</button></header>
+<div id="feed"></div><div id="live"><video id="lv" controls playsinline autoplay muted></video><div class="c" id="lmsg" style="position:absolute;inset:0;pointer-events:none"></div></div>
+<div class="bg" id="cs"><div class="box"><b>Comments</b><div id="cl"></div><input type="text" id="ct" placeholder="Add a comment" maxlength="200"><button class="go" id="csend">Send</button><button id="cx">Close</button></div></div>
+<div class="bg" id="ns"><div class="box"><b>New post</b>
+<div class="pick"><label class="pb">📷 Record<input type="file" id="rec" accept="video/*" capture="environment" hidden></label><label class="pb">🖼 Gallery<input type="file" id="gal" accept="video/*,image/*" hidden></label></div>
+<div class="m" id="fn"></div><input type="text" id="cap" placeholder="Caption" maxlength="150"><div class="m" id="msg"></div>
+<button class="go" id="go">Post</button><button id="nx">Cancel</button></div></div>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,GoogleAuthProvider,signInWithPopup,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,collection,doc,setDoc,deleteDoc,onSnapshot,query,orderBy,limit} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+// 1) PASTE YOUR FIREBASE CONFIG HERE (Project settings > Your apps > Web)
+const firebaseConfig={apiKey:"AIzaSyDX6AwWqbgRccVoasb2-I1kOZd4OUgzUag",authDomain:"scrollme-6c1ef.firebaseapp.com",projectId:"scrollme-6c1ef",storageBucket:"scrollme-6c1ef.firebasestorage.app",messagingSenderId:"250546677629",appId:"1:250546677629:web:a9149b2e27bfe296344e14"};
+// 2) Only this Google account can set the live stream address
+const ADMIN_EMAIL="cassiusnethengwe@gmail.com";
+const CLOUD="urlrycdq",PRESET="ScrollMe";
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
+const $=s=>document.querySelector(s);let me=null,L={},M={},C={},cm=[],cur=null,subs=[],hls;
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+function gate(){const f=$('#feed');f.innerHTML='';const c=el('div','c');c.append(el('h2','','Welcome to ScrollMe'));const b=el('button','','Sign in with Google');b.style.cssText='background:#ff3d77;color:#fff;border:0;border-radius:24px;padding:14px 22px;font-weight:700';b.onclick=()=>signInWithPopup(auth,new GoogleAuthProvider()).catch(e=>alert(e.message));c.append(b);f.append(c)}
+onAuthStateChanged(auth,u=>{subs.forEach(f=>f());subs=[];me=u;$('#up').hidden=$('#out').hidden=!u;if(!u){gate();return}start()});
+$('#out').onclick=()=>signOut(auth);
+function start(){
+ subs.push(onSnapshot(query(collection(db,'posts'),orderBy('ts','desc'),limit(50)),s=>draw(s.docs.map(d=>({id:d.id,...d.data()})))));
+ subs.push(onSnapshot(collection(db,'likes'),s=>{L={};M={};s.docs.forEach(d=>{const x=d.data();L[x.pid]=(L[x.pid]||0)+1;if(x.uid===me.uid)M[x.pid]=1});upd()}));
+ subs.push(onSnapshot(query(collection(db,'comments'),orderBy('ts','asc'),limit(1000)),s=>{C={};cm=s.docs.map(d=>({id:d.id,...d.data()}));cm.forEach(x=>C[x.pid]=(C[x.pid]||0)+1);upd();if(cur)showC()}));
+ subs.push(onSnapshot(doc(db,'config','live'),s=>live(s.exists()?s.data():null)));
+}
+function draw(ps){const f=$('#feed');f.innerHTML='';if(!ps.length){const c=el('div','c','No posts yet. Tap + to share the first one.');f.append(c);return}
+ ps.forEach(p=>{const e=el('div','post'),m=el(p.type==='video'?'video':'img');m.src=p.url;
+  if(p.type==='video'){m.loop=m.muted=m.playsInline=true;m.onclick=()=>{m.muted=false;m.paused?m.play():m.pause()}}
+  const i=el('div','info');i.append(el('b','','@'+p.name),el('div','',p.caption||''));
+  const sd=el('div','side'),lk=el('button');lk.dataset.lk=p.id;lk.onclick=()=>like(p.id);const cb=el('button');cb.dataset.cm=p.id;cb.onclick=()=>{cur=p.id;$('#cs').classList.add('on');showC()};sd.append(lk,cb);
+  e.append(m,i,sd);if(p.uid===me.uid){const d=el('button','del','Delete');d.onclick=()=>confirm('Delete this post?')&&deleteDoc(doc(db,'posts',p.id));e.append(d)}f.append(e)});
+ const io=new IntersectionObserver(es=>es.forEach(x=>{const v=x.target.querySelector('video');if(v)x.isIntersecting?v.play().catch(()=>{}):v.pause()}),{threshold:.7});
+ f.querySelectorAll('.post').forEach(p=>io.observe(p));upd()}
+function upd(){document.querySelectorAll('[data-lk]').forEach(b=>{const i=b.dataset.lk;b.textContent=(M[i]?'♥ ':'♡ ')+(L[i]||0);b.className=M[i]?'on':''});document.querySelectorAll('[data-cm]').forEach(b=>b.textContent='💬 '+(C[b.dataset.cm]||0))}
+function like(pid){const r=doc(db,'likes',pid+'_'+me.uid);return M[pid]?deleteDoc(r):setDoc(r,{pid,uid:me.uid,ts:Date.now()})}
+function showC(){const b=$('#cl');b.innerHTML='';const l=cm.filter(c=>c.pid===cur);if(!l.length)b.append(el('p','','No comments yet.'));
+ l.forEach(c=>{const p=el('p'),n=el('b','','@'+c.name+' ');p.append(n,document.createTextNode(c.text));if(c.uid===me.uid){const x=el('small','m',' delete');x.onclick=()=>deleteDoc(doc(db,'comments',c.id));p.append(x)}b.append(p)})}
+$('#cx').onclick=()=>{cur=null;$('#cs').classList.remove('on')};
+$('#csend').onclick=async()=>{const t=$('#ct').value.trim();if(!t||!cur)return;await setDoc(doc(collection(db,'comments')),{pid:cur,uid:me.uid,name:me.displayName||'user',text:t,ts:Date.now()});$('#ct').value=''};
+$('#up').onclick=()=>$('#ns').classList.add('on');$('#nx').onclick=()=>$('#ns').classList.remove('on');
+$('#rec').onchange=()=>{$('#gal').value='';$('#fn').textContent=$('#rec').files[0]?.name||''};
+$('#gal').onchange=()=>{$('#rec').value='';$('#fn').textContent=$('#gal').files[0]?.name||''};
+$('#go').onclick=async()=>{const f=$('#gal').files[0]||$('#rec').files[0],m=$('#msg');if(!f){m.textContent='Choose a video or photo first.';return}
+ try{const fd=new FormData();fd.append('file',f);fd.append('upload_preset',PRESET);
+  const x=await new Promise((ok,no)=>{const q=new XMLHttpRequest();q.open('POST','https://api.cloudinary.com/v1_1/'+CLOUD+'/auto/upload');
+   q.upload.onprogress=e=>{if(e.lengthComputable)m.textContent='Uploading '+Math.round(e.loaded/e.total*100)+'%'};
+   q.onload=()=>{const j=JSON.parse(q.responseText||'{}');q.status<300?ok(j):no(new Error(j.error?.message||'Upload rejected'))};q.onerror=()=>no(new Error('Network error'));q.send(fd)});
+  await setDoc(doc(collection(db,'posts')),{uid:me.uid,name:me.displayName||'user',url:x.secure_url,type:f.type.startsWith('video')?'video':'image',caption:$('#cap').value.trim(),ts:Date.now()});
+  $('#gal').value=$('#rec').value=$('#cap').value='';$('#fn').textContent=m.textContent='';$('#ns').classList.remove('on')}catch(e){m.textContent='Upload failed: '+e.message}};
+// Tabs + live
+$('#tf').onclick=()=>{$('#feed').style.display='block';$('#live').style.display='none';$('#lv').pause()};
+$('#tl').onclick=()=>{$('#feed').style.display='none';$('#live').style.display='block';$('#lv').play().catch(()=>{})};
+function live(d){const v=$('#lv'),m=$('#lmsg');m.innerHTML='';if(hls){hls.destroy();hls=null}
+ if(me.email===ADMIN_EMAIL){const b=el('button','','Set live stream URL');b.style.cssText='pointer-events:auto;margin-top:70px;background:#ff3d77;color:#fff;border:0;border-radius:20px;padding:9px 14px';
+  b.onclick=()=>{const u=prompt('HLS stream address (.m3u8), only streams you have rights to:',d?.url||'');if(u!==null)setDoc(doc(db,'config','live'),{url:u.trim()})};m.append(b)}
+ if(!d||!d.url){v.removeAttribute('src');m.prepend(el('div','','No live stream right now.'));return}
+ if(window.Hls&&Hls.isSupported()){hls=new Hls();hls.loadSource(d.url);hls.attachMedia(v)}else v.src=d.url}
+</script></body></html>
